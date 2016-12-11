@@ -30,8 +30,8 @@ If so, then that's absurd! It doesn't need to spawn a process to use those, this
 they must be using their file descriptors globally instead of passing them as arguments, so to change
 what they print to, they have to change the process itself, so they have to run in a subshell...
 
-How they shold hae done it
---------------------------
+How they shold have done it
+---------------------------
 
 Here I have written `bashish`, a proof of concept that builtins do not need to run in a subshell,
 they just need to have their file descriptors injected:
