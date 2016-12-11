@@ -1,0 +1,175 @@
+#!/usr/bin/env ruby
+require 'io/console'
+
+def cleanup_fds(attrs)
+  attrs[:stdin].close  if attrs[:close_stdin]
+  attrs[:stdout].close if attrs[:close_stdout]
+  attrs[:stderr].close if attrs[:close_stderr]
+end
+
+if ARGV[0] == '-c'
+  # If invoked with -c, program is in first argument
+  program = ARGV[1] || raise("bashish: -c: option requires an argument")
+
+  require 'stringio'
+  program_stream = StringIO.new program
+  stdin          = $stdin
+else
+  # Program is to be read from standard input
+  program_stream = $stdin
+  stdin          = $stdin
+  print_prompt   = lambda { print '$ ' } # noop
+end
+
+# If stdin is terminal, put into raw mode to read by character
+if program_stream.tty?
+  require 'io/console'
+  get_char     = -> { program_stream.raw &:getc }
+  print_prompt = lambda { } # noop
+else
+  get_char = -> { program_stream.getc }
+end
+
+variables = {}
+
+# Functions that are run in our shell instead of subprocesses
+builtins = {
+  'read' => lambda do |attrs|
+    # technically this isn't how bash's read works, but it's enough to mimic the builtin
+    status = 0
+    if var_name = attrs[:argv][0]
+      variables[var_name] = attrs[:stdin].gets.strip
+    else
+      status = 1
+    end
+    cleanup_fds attrs
+    status
+  end,
+
+  'echo' => lambda do |attrs|
+    printables = attrs[:argv].map do |arg|
+      if arg[0] == '$'
+        var_name = arg[1..-1]
+        variables[var_name]
+      else
+        arg
+      end
+    end
+    attrs[:stdout].puts printables.join(" ")
+    cleanup_fds attrs
+    0
+  end
+}
+
+
+current_input = []
+continue = true
+while continue
+  # The next character of input
+  char = program_stream.getc
+
+  # If there was no more input or control-d was pressed, then we're done after this
+  if !char || char == ?\C-d
+    continue = false
+  end
+
+  # Interrupt if control-c was pressed
+  if char == ?\C-c
+    Process.kill "INT", Process.pid
+    next
+  end
+
+  # Keep reading if we haven't hit the end of a line
+  # NOTE: in reality, this should not process on a semicolon, should wait until EOL,
+  # b/c otherwise the command after the semicolon is treated as stdin. But I think
+  # I've got enough to have explored the idea I'm getting at, so going to leave it
+  if char && char != ";" && char != "\n" && char != "\r"
+    current_input << char
+    next
+  end
+
+  # Reset the input
+  statement     = current_input.join
+  current_input = []
+
+  # Parse the statement
+  tokens   = statement.strip.split(/[ \t]+|(?=[|;\n\r])|(?<=[|;\n\r])/)
+  commands = tokens.slice_before { |t| t == "|" }.to_a.each { |cmd| cmd.shift if cmd[0] == "|" }
+
+  # Connnect each command to our stderr, first has our stdin, last has our stdout
+  pipeline = commands.map do |command|
+    name, *argv = command
+    { command:      command,
+      program_name: name,
+      argv:         argv,
+      stdin:        $stdin,
+      stdout:       $stdout,
+      stderr:       $stderr,
+      close_stdin:  false,
+      close_stdout: false,
+      close_stderr: false,
+    }
+  end
+
+  # Pipe each command's stdout to the next command's stdin
+  pipeline.each_cons 2 do |left, right|
+    # The parent process will need to close these, because otherwise both parent and child
+    # have the file descriptor open, and EOF will not be emitted until both are finished
+    # but parent only needs it long enough to pass to the child
+    right[:stdin], left[:stdout] = IO.pipe
+    right[:close_stdin] = true
+    left[:close_stdout] = true
+  end
+
+  # Execute each command
+  pipeline.each do |attrs|
+    # if builtin, execute it in a thread
+    if builtin = builtins[attrs[:program_name]]
+      attrs[:thread] = Thread.new do
+        # Thread.current.abort_on_exception = true
+        begin
+          builtin.call(attrs) # builtin returns exit status
+        rescue StandardError
+          attrs[:errinfo] = $!
+          1                   # error exit status
+        end
+      end
+
+    # Command is a program, fork and execute child
+    else
+      if pid = fork
+        # We are the parent process, document the pid, maybe close file descriptors
+        attrs[:pid] = pid
+        attrs[:stdin].close  if attrs[:close_stdin]
+        attrs[:stdout].close if attrs[:close_stdout]
+        attrs[:stderr].close if attrs[:close_stderr]
+      else
+        # We are the child process, set the new file descriptors and exec the new program
+        $stdin.reopen  attrs[:stdin]
+        $stdout.reopen attrs[:stdout]
+        $stderr.reopen attrs[:stderr]
+        exec *attrs[:command]
+      end
+    end
+  end
+
+  # Wait for the children to finish, record their exit statuses
+  pipeline.each do |attrs|
+    if attrs[:pid]
+      Process.wait attrs[:pid]
+      attrs[:status] = $?
+    end
+    if attrs[:thread]
+      attrs[:status] = attrs[:thread].join
+    end
+  end
+
+  # # Take a look at the data
+  # require 'pp'
+  #
+  # puts "PIPELINE:"
+  # pp pipeline
+  #
+  # puts "VARIABLES:"
+  # pp variables
+end
