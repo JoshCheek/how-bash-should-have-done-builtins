@@ -37,9 +37,11 @@ Here I have written `bashish`, a proof of concept that builtins do not need to r
 they just need to have their file descriptors injected:
 
 ```sh
+# this works
 $ echo abc | ./bashish -c 'read input; echo $input'
 abc
 
+# omg, so does this!
 $ ./bashish -c 'echo abc | read input; echo $input'
 abc
 ```
