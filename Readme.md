@@ -31,3 +31,11 @@ abc
 $ echo 'echo abc | read input; echo $input' | ./bashish
 abc
 ```
+
+Take a look:
+
+![comparison](comparison.png)
+
+Surprisingly, it has mediocre interactive support, as well:
+
+![interactive](interactive.gif)
