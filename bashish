@@ -18,16 +18,16 @@ else
   # Program is to be read from standard input
   program_stream = $stdin
   stdin          = $stdin
-  print_prompt   = lambda { print '$ ' } # noop
 end
 
 # If stdin is terminal, put into raw mode to read by character
 if program_stream.tty?
   require 'io/console'
   get_char     = -> { program_stream.raw &:getc }
-  print_prompt = lambda { } # noop
+  print_prompt = lambda { print '$ ' } # noop
 else
-  get_char = -> { program_stream.getc }
+  get_char     = -> { program_stream.getc }
+  print_prompt = lambda { } # noop
 end
 
 variables = {}
@@ -65,6 +65,10 @@ builtins = {
 current_input = []
 continue = true
 while continue
+  if current_input.empty?
+    print_prompt.call
+  end
+
   # The next character of input
   char = program_stream.getc
 
@@ -140,9 +144,7 @@ while continue
       if pid = fork
         # We are the parent process, document the pid, maybe close file descriptors
         attrs[:pid] = pid
-        attrs[:stdin].close  if attrs[:close_stdin]
-        attrs[:stdout].close if attrs[:close_stdout]
-        attrs[:stderr].close if attrs[:close_stderr]
+        cleanup_fds attrs
       else
         # We are the child process, set the new file descriptors and exec the new program
         $stdin.reopen  attrs[:stdin]
