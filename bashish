@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-require 'io/console'
 
 def cleanup_fds(attrs)
   attrs[:stdin].close  if attrs[:close_stdin]
@@ -24,18 +23,18 @@ end
 if program_stream.tty?
   require 'io/console'
   get_char     = -> { program_stream.raw &:getc }
-  print_prompt = lambda { print '$ ' } # noop
+  print_prompt = -> { print '$ ' }
 else
   get_char     = -> { program_stream.getc }
-  print_prompt = lambda { } # noop
+  print_prompt = -> { } # noop
 end
 
 variables = {}
 
 # Functions that are run in our shell instead of subprocesses
+# technically they're is a subset of bash's but it's enough to mimic them for the common use case
 builtins = {
   'read' => lambda do |attrs|
-    # technically this isn't how bash's read works, but it's enough to mimic the builtin
     status = 0
     if var_name = attrs[:argv][0]
       variables[var_name] = attrs[:stdin].gets.strip
